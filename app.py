@@ -56,6 +56,36 @@ cb = Convertible(maturity=maturity, coupon=coupon, freq=freq,
                  conv_price=round(spot * (1 + premium), 4),
                  call_start=call_start if call_on else None, call_trigger=trigger,
                  put_date=put_date if put_on else None)
+
+# ------------------------------------------- terms read from a prospectus (RAG) ---
+terms_src = "manual inputs in the sidebar"
+with st.expander("Read the bond terms from a prospectus (PDF, Markdown or text)"):
+    up = st.file_uploader("Terms and conditions", type=["pdf", "md", "txt"])
+    if up is not None:
+        import tempfile
+        from pathlib import Path
+        from prospectus_rag import ProspectusIndex, answer, extract_terms, to_convertible
+        suffix = Path(up.name).suffix
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(up.getvalue())
+        idx = ProspectusIndex(tmp.name)
+        ex = extract_terms(idx)
+        st.write(f"{len(idx.chunks)} passages, embeddings: {idx.embedder.backend}, "
+                 f"extraction: {ex['method']}")
+        st.table([{"term": k, "value": str(v), "passage": ex["sources"].get(k)}
+                  for k, v in ex["terms"].items()])
+        try:
+            cb = to_convertible(ex["terms"])
+            terms_src = f"extracted from {up.name}"
+            st.success("The pricer now uses these terms. Set the spot in the sidebar to the share price (conversion price " f"{cb.conv_price:.2f}).")
+        except KeyError as exc:
+            st.warning(f"Term not found: {exc}. Manual terms kept.")
+        q = st.text_input("Ask the document", "Is there dividend protection?")
+        if q:
+            a_ = answer(idx, q)
+            st.write(a_["answer"])
+            st.caption(f"{a_['mode']} | sources (passage, page, score): {a_['sources']}")
+
 mk = Market(spot=spot, vol=vol, rate=rate, div=div, spread=spread_bp / 1e4)
 
 
@@ -73,7 +103,7 @@ def run(cb, mk, steps):
 
 
 a, spots, profile, pnl, moves, spreads, grid = run(cb, mk, steps)
-st.caption(f"Market inputs: {src}. Bond terms are user inputs, not a live issue.")
+st.caption(f"Market inputs: {src}. Bond terms: {terms_src}.")
 
 # ------------------------------------------------------------------ screen ---
 c = st.columns(6)

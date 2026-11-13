@@ -3,7 +3,8 @@
 A convertible bond priced the way a convertibles desk reads it: price against parity and
 bond floor, premiums, Greeks, credit sensitivity, the value of each clause, implied
 volatility, scenarios, and the P&L of a delta-hedged position. Python engine, Streamlit +
-Plotly dashboard, pytest suite.
+Plotly dashboard, a **prospectus reader (RAG)** that extracts the bond's terms and feeds
+them to the pricer, and a pytest suite.
 
 ![dashboard](out_dashboard.png)
 
@@ -29,6 +30,34 @@ At each node, working back from maturity:
 Prices average a tree of N and N+1 steps to damp the odd/even oscillation. Delta and gamma
 are read off the tree's first nodes; vega, rho and CS01 use central bumps.
 
+## Prospectus reader: from terms and conditions to a price (RAG)
+
+Before pricing a new issue, a trader reads its terms and conditions. `prospectus_rag.py`
+does that step:
+
+| Step | Method |
+|---|---|
+| Load and chunk | PDF (pypdf), Markdown or text; overlapping 70-word passages tagged with their page |
+| Embed | `sentence-transformers` (multilingual MiniLM, French or English) when installed; otherwise TF-IDF + truncated SVD (LSA) embeddings, fully offline |
+| Retrieve | cosine similarity between the question and every passage; neighbouring passages added so a clause cut at a window edge is read whole |
+| Answer | with `ANTHROPIC_API_KEY` set, an LLM answers **only from the retrieved passages** and cites them; without a key, the best passage is returned |
+| Extract | one retrieval per term (issue and maturity dates, coupon and frequency, conversion price, soft-call date and trigger, put date), then the LLM (JSON) or regular expressions read the value; each term keeps its source passage |
+| Price | the terms map to `cb_pricer.Convertible` in years from the valuation date |
+
+```bash
+python prospectus_rag.py docs/sample_terms_illustrative.md --spot 40 --ask "Is there dividend protection?"
+```
+
+On the sample document every term is extracted correctly (issue 15 Jan 2026, maturity
+15 Jan 2031, 1.25% semi-annual, conversion price 54.00, soft call from 5 Feb 2029 at 130%,
+put 15 Jan 2029), and the pricer returns 100.34 at a spot of 40 (parity 74.07, bond floor
+83.34, delta 47%).
+
+> `docs/sample_terms_illustrative.md` is a **fictional** issuer written to test the tool, not
+> a real security. Drop real terms and conditions (PDF) into `docs/` to use it on a live
+> issue. The dashboard has the same reader in its "Read the bond terms from a prospectus"
+> panel.
+
 ## Run
 
 ```bash
@@ -36,7 +65,7 @@ pip install -r requirements.txt
 python run.py                    # report + charts on explicit inputs
 python run.py --ticker AIR.PA    # spot and 1-year realised vol of a real share (Yahoo Finance)
 streamlit run app.py             # interactive dashboard
-pytest -q                        # 9 checks
+pytest -q                        # 15 checks
 ```
 
 ## Results on the illustrative convertible
@@ -80,6 +109,9 @@ What it shows:
 - A call lowers the price, a hard call more than a soft one, a put raises it.
 - Equity part + debt part = price; implied volatility round trip.
 - The delta-hedged position gains on ±20% moves.
+- Prospectus reader: overlapping chunks, retrieval finds the right clause, all eight terms
+  extracted, terms feed the pricer, extractive answers cite three passages, and the LLM JSON
+  path is parsed correctly (tested with a mocked reply).
 
 ## Limits
 
@@ -89,3 +121,6 @@ What it shows:
 - No accrued interest on conversion or call, no make-whole, no dividend protection, no
   default jump to the share price.
 - Bond terms are illustrative; only spot and volatility can come from the market.
+- The regular-expression extractor is written for English and French terms and conditions in
+  the usual format; unusual wording needs the LLM path. The LSA embeddings are fitted on one
+  document at a time and are weaker than sentence-transformers.

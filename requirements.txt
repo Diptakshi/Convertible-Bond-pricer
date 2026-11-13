@@ -4,3 +4,8 @@ streamlit>=1.40
 plotly>=5.20
 yfinance>=0.2
 pytest>=8.0
+pypdf>=4.0
+scikit-learn>=1.3
+# optional: better embeddings (downloads a model) and LLM answers (needs ANTHROPIC_API_KEY)
+# sentence-transformers>=3.0
+# anthropic>=0.40
